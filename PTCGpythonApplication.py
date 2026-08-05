@@ -1,10 +1,12 @@
 import sqlite3
+our_db = "PTCGmanager.db"
 
+#one time use, useless now
 def create_tables():
     with open("PTCGmanagerTables.sql", "r") as file:
         sql_script = file.read()
 
-    conn = sqlite3.connect("PTCGmanager.db")
+    conn = sqlite3.connect(our_db)
     cursor = conn.cursor()
 
     try:
@@ -17,4 +19,24 @@ def create_tables():
     finally:
         conn.close()
 
-create_tables()
+def hash(text):
+    hash_value = 5381 #seed
+
+    for char in text:
+        hash_value = ((hash_value << 5) + hash_value) + ord(char)
+
+    return hash_value & 0xFFFFFFFF
+
+def login(email, password):
+    conn = sqlite3.connect(our_db)
+    cursor = conn.cursor()
+
+    query = "SELECT EXISTS (SELECT 1 FROM )"
+
+def logout():
+    pass
+
+def main():
+    pass
+
+main()
