@@ -9,24 +9,6 @@ SEPARATOR = "---------------------------------"
 logged_in = False
 
 # # # Functions
-#one time use, useless now
-def create_tables():
-    with open("PTCGmanagerTables.sql", "r") as file:
-        sql_script = file.read()
-
-    conn = sqlite3.connect(OUR_DB)
-    cursor = conn.cursor()
-
-    try:
-        cursor.executescript(sql_script)
-        conn.commit()
-        print("Tables created successfully")
-    except sqlite3.Error as e:
-        conn.rollback()
-        print(f"Error: {e}")
-    finally:
-        conn.close()
-
 def hash(text:str):
     key_bytes = HASH_SECRET_KEY.encode('utf-8')
     text_bytes = text.encode('utf-8')
@@ -45,10 +27,10 @@ def login(email:str, password:str):
     conn = sqlite3.connect(OUR_DB)
     cursor = conn.cursor()
 
-    hashed_password = str(hash(password))
+    hashed_password = str(hash(password.strip()))
     
     query = "SELECT EXISTS (SELECT 1 FROM Staff WHERE Email = ? AND PasswordHash = ?)"
-    cursor.execute(query, (email, hashed_password))
+    cursor.execute(query, (email.strip().lower(), hashed_password))
     exists = bool(cursor.fetchone()[0])
 
     cursor.close()  
@@ -64,7 +46,7 @@ def logout():
 
 def main():
     global logged_in
-
+    
     print(SEPARATOR)
     print("Weolcome to the Pokemon TCG manager!")
 
@@ -83,5 +65,4 @@ def main():
             print("Your details do not match anything in our system.")
         input("> Press enter to continue ")
         
-
 main()
