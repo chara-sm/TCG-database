@@ -41,19 +41,90 @@ def login(email:str, passwordhash:str):
     return exists
 
 def logout():
-    pass
+    global logged_in, current_user_email, current_user_passwordhash
 
-def add_record(table_name, data_dict):
-    if table_name == "Log": return False
+    logged_in = False
+    current_user_email = ""
+    current_user_passwordhash = ""
 
-    values = ", ".join(
-        
-    )
+    clear_terminal()
+    print("Successfully logged out!")
+    input("> Press enter to continue ")
 
-def search_table(table_name, conditions_dict, fields_required=None):
+    return True
+
+def get_column_types(table_name):
+    schema_map = {}
 
     conn = sqlite3.connect(OUR_DB)
     cursor = conn.cursor()
+
+    query = f"SELECT name, type FROM PRAGMA_TABLE_INFO('{table_name}')"
+    cursor.execute(query)
+    rows = cursor.fetchall()
+
+    for name, col_type in rows:
+        col_type = col_type.upper()
+        if "INT" in col_type:
+            schema_map[name] = int
+        elif "REAL" in col_type:
+            schema_map[name] = float
+        else:
+            schema_map[name] = str
+
+    cursor.close()
+    conn.close()
+
+    return schema_map
+
+def add_record(table_name, data_dict, is_user=False):
+    if table_name == "Log" and is_user:
+        print("Cannot add records into logs as a user!")
+        return False
+
+    conn = sqlite3.connect(OUR_DB)
+    cursor = conn.cursor()
+    success = False
+    
+    clean_data_dict = {}
+    rules = get_column_types(table_name)
+
+    for field, value in data_dict.items():
+        datatype = rules[field]
+
+        if value is None:
+            clean_data_dict[field] = None
+        else:
+            value = str(value).strip()
+            clean_data_dict[field] = datatype(value)
+
+    insert_fields = ", ".join(
+        field for field in clean_data_dict
+    )
+
+    values = tuple(clean_data_dict.values())
+    values_placeholder = ", ".join(
+        ["?"] * len(values)
+    )
+
+    try:
+        query = f"INSERT INTO {table_name} ({insert_fields}) VALUES ({values_placeholder})"
+        cursor.execute(query, values)
+        conn.commit()
+        success = True
+    except sqlite3.Error as e:
+        print("Error inserting data:", e)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return success
+
+def search_table(table_name, conditions_dict, fields_required=None):
+    conn = sqlite3.connect(OUR_DB)
+    cursor = conn.cursor()
+
+    results = None
 
     if fields_required:
         if type(fields_required) is str:
@@ -64,8 +135,6 @@ def search_table(table_name, conditions_dict, fields_required=None):
             )
     else:
         select_condition = "*"
-
-    results = None
 
     try:
         if conditions_dict:
@@ -84,15 +153,33 @@ def search_table(table_name, conditions_dict, fields_required=None):
             results = cursor.fetchall()
     except sqlite3.Error as e:
         print("Search table failed:", e)
-
-    cursor.close()
-    conn.close()
+    finally:
+        cursor.close()
+        conn.close()
 
     return results
 
+def manage_players():
+    ans = None
+    while ans not in (1,2,3,4):
+        clear_terminal()
+        print("Manage Players")
+        print(SEPARATOR)
+        print("""1. View all players
+2. Register a new player
+3. Edit an existing player's data
+4. Delete an existing player""")
+        print(SEPARATOR)
+        ans = input("> ")
+
+        try:
+            ans = int(ans)
+        except ValueError as e:
+            print("Please input a number.")
+            input("> Press enter to continue ")
+
 def home_page():
     clear_terminal()
-    print(SEPARATOR)
     result = search_table("Staff", {"Email": current_user_email, "PasswordHash": current_user_passwordhash}, ["FirstName", "LastName"])
     FirstName, LastName = result[0][0], result[0][1]
     
@@ -101,46 +188,64 @@ def home_page():
     print("What would you like to do?")
 
     print("""
-1. View tables
-2. Search tables
-3. Add records
-4. Edit records
-5. Delete records
-          """)
+1. Manage Players
+2. Manage Cards
+3. Manage Card Sets
+4. Manage Decks
+5. Manage Tournaments
+6. Manage Your Account
+7. View Logs
+8. Logout""")
+    
+    print(SEPARATOR)
+    ans = input("> ")
 
-    input()
+    try:
+        ans = int(ans)
+
+        match ans:
+            case 1:
+                manage_players()
+            case 8:
+                logout()
+            case _:
+                print("Not a valid option!")
+                input("> Press enter to continue ")
+    except ValueError as e:
+        print("Please input a number.")
+        input("> Press enter to continue ")
 
 def main():
     global logged_in, current_user_email, current_user_passwordhash
 
+    while True:
     # Handle log in
-    while not logged_in:
-        clear_terminal()
+        if not logged_in:
+            clear_terminal()
 
-        print(SEPARATOR)
-        print("Welcome to the Pokemon TCG manager!")
-        print(SEPARATOR)
-        print("Login Page")
+            print(SEPARATOR)
+            print("Welcome to the Pokemon TCG manager!")
+            print(SEPARATOR)
+            print("Login Page")
 
-        # Fetch user details
-        current_user_email = input("Email:")
-        current_user_passwordhash = input("Password:")
+            # Fetch user details
+            current_user_email = input("Email:")
+            current_user_passwordhash = input("Password:")
 
-        # Sanitise input
-        current_user_email = current_user_email.strip().lower()
-        current_user_passwordhash = str(hash(current_user_passwordhash.strip()))
+            # Sanitise input
+            current_user_email = current_user_email.strip().lower()
+            current_user_passwordhash = str(hash(current_user_passwordhash.strip()))
 
-        # Attempt login
-        logged_in = login(current_user_email, current_user_passwordhash)
+            # Attempt login
+            logged_in = login(current_user_email, current_user_passwordhash)
 
-        clear_terminal()
+            # Print message accordingly
+            print(SEPARATOR)
+            print("Sucessful login!" if logged_in else "Your details do not match anything in our system.")
+            input("> Press enter to continue ")
 
-        # Print message accordingly
-        print("Sucessful login!" if logged_in else "Your details do not match anything in our system.")
-        input("> Press enter to continue ")
-
-    # Handle main manager
-    while logged_in:
-        home_page()
+        # Handle main manager
+        else:
+            home_page()
 
 main()

@@ -11,6 +11,8 @@ DROP TABLE IF EXISTS Player;
 DROP TABLE IF EXISTS "Log";
 DROP TABLE IF EXISTS Staff;
 
+PRAGMA foreign_keys = ON;
+
 CREATE TABLE Staff (
   StaffID INTEGER PRIMARY KEY AUTOINCREMENT,
   FirstName TEXT NOT NULL,
@@ -53,8 +55,8 @@ CREATE TABLE Player (
 CREATE TABLE "Set" (
   SetID TEXT PRIMARY KEY,
   SetName TEXT NOT NULL,
-  SetTotalNo NOT NULL,
-  ReleaseDate NOT NULL
+  SetTotalNo INTEGER NOT NULL,
+  ReleaseDate TEXT NOT NULL
 );
 
 CREATE TABLE Card (
@@ -116,6 +118,6 @@ CREATE TABLE "Match" (
   FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID),
   FOREIGN KEY (Player1ID) REFERENCES Player(PlayerID),
   FOREIGN KEY (Player2ID) REFERENCES Player(PlayerID)
-);
 
-PRAGMA foreign_keys = ON;
+  CHECK (Player1ID != Player2ID)
+);
