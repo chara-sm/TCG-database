@@ -77,17 +77,8 @@ def get_column_types(table_name):
 
     return schema_map
 
-def add_record(table_name, data_dict, is_user=False):
-    if table_name == "Log" and is_user:
-        print("Cannot add records into logs as a user!")
-        return False
-
-    conn = sqlite3.connect(OUR_DB)
-    cursor = conn.cursor()
-    success = False
-    
+def data_dict_clean(data_dict, rules):
     clean_data_dict = {}
-    rules = get_column_types(table_name)
 
     for field, value in data_dict.items():
         datatype = rules[field]
@@ -98,22 +89,91 @@ def add_record(table_name, data_dict, is_user=False):
             value = str(value).strip()
             clean_data_dict[field] = datatype(value)
 
-    insert_fields = ", ".join(
-        field for field in clean_data_dict
-    )
+    return clean_data_dict
 
-    values = tuple(clean_data_dict.values())
-    values_placeholder = ", ".join(
-        ["?"] * len(values)
-    )
+def add_record(table_name, data_dict, is_user=False):
+    if table_name == "Log" and is_user:
+        print("Cannot add records into logs as a user!")
+        return False
+
+    conn = sqlite3.connect(OUR_DB)
+    cursor = conn.cursor()
+    success = False
 
     try:
+        rules = get_column_types(table_name)
+
+        clean_data_dict = data_dict_clean(data_dict, rules)
+
+        insert_fields = ", ".join(
+            field for field in clean_data_dict
+        )
+
+        values = tuple(clean_data_dict.values())
+        values_placeholder = ", ".join(
+            ["?"] * len(values) 
+        )
+
         query = f"INSERT INTO {table_name} ({insert_fields}) VALUES ({values_placeholder})"
         cursor.execute(query, values)
         conn.commit()
         success = True
     except sqlite3.Error as e:
         print("Error inserting data:", e)
+    except Exception as e:
+        print("Error in cleaning data:", e)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return success
+
+def edit_record(table_name, conditions_dict, is_user=False):
+    if (table_name == "Log" or table_name == "Staff") and is_user:
+        print("Cannot edit staff/log records as a user!")
+        return False
+
+    conn = sqlite3.connect(OUR_DB)
+    cursor = conn.cursor()
+    success = False
+    
+    data_dict = {}
+
+    try:
+        rules = get_column_types(table_name)
+
+        for col in rules.keys():
+            field_value = input(f"{col}: ").strip()
+
+            if field_value:
+                data_dict[col] = field_value
+
+        clean_data_dict = data_dict_clean(data_dict, rules)
+
+        if not clean_data_dict:
+            print("No changes were entered.")
+            return False
+
+        set_values = tuple(clean_data_dict.values())
+        set_placeholder = ", ".join(
+            f"{field} = ?" for field in clean_data_dict.keys()
+        )
+
+        where_values = tuple(conditions_dict.values())
+        where_condition = " AND ".join(
+            f"{field} = ?" for field in conditions_dict.keys()
+        )
+
+        values = set_values + where_values
+
+        query = f"UPDATE {table_name} SET {set_placeholder} WHERE {where_condition}"
+        cursor.execute(query, values)
+        conn.commit()
+        success = True
+    except sqlite3.Error as e:
+        print("Error editing data:", e)
+    except Exception as e:
+        print("Error in cleaning data:", e)
     finally:
         cursor.close()
         conn.close()
@@ -126,17 +186,17 @@ def search_table(table_name, conditions_dict, fields_required=None):
 
     results = None
 
-    if fields_required:
-        if type(fields_required) is str:
-            select_condition = fields_required
-        else:
-            select_condition = ", ".join(
-                field for field in fields_required
-            )
-    else:
-        select_condition = "*"
-
     try:
+        if fields_required:
+            if type(fields_required) is str:
+                select_condition = fields_required
+            else:
+                select_condition = ", ".join(
+                    field for field in fields_required
+                )
+        else:
+            select_condition = "*"
+
         if conditions_dict:
             where_condition = " AND ".join(
                 f"{field} = ?" for field in conditions_dict
@@ -161,6 +221,7 @@ def search_table(table_name, conditions_dict, fields_required=None):
 
 def manage_players():
     ans = None
+
     while ans not in (1,2,3,4):
         clear_terminal()
         print("Manage Players")
