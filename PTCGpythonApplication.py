@@ -92,8 +92,8 @@ def data_dict_clean(data_dict, rules):
     return clean_data_dict
 
 def add_record(table_name, data_dict, is_user=False):
-    if table_name == "Log" and is_user:
-        print("Cannot add records into logs as a user!")
+    if table_name in ['Log', 'Staff'] and is_user:
+        print("Cannot add staff/log records as a user!")
         return False
 
     conn = sqlite3.connect(OUR_DB)
@@ -121,7 +121,7 @@ def add_record(table_name, data_dict, is_user=False):
     except sqlite3.Error as e:
         print("Error inserting data:", e)
     except Exception as e:
-        print("Error in cleaning data:", e)
+        print("Error cleaning data:", e)
     finally:
         cursor.close()
         conn.close()
@@ -129,7 +129,7 @@ def add_record(table_name, data_dict, is_user=False):
     return success
 
 def edit_record(table_name, conditions_dict, is_user=False):
-    if (table_name == "Log" or table_name == "Staff") and is_user:
+    if table_name in ['Log', 'Staff'] and is_user:
         print("Cannot edit staff/log records as a user!")
         return False
 
@@ -146,7 +146,10 @@ def edit_record(table_name, conditions_dict, is_user=False):
             field_value = input(f"{col}: ").strip()
 
             if field_value:
-                data_dict[col] = field_value
+                if field_value.upper() == "NULL":
+                    data_dict[col] = None
+                else:
+                    data_dict[col] = field_value
 
         clean_data_dict = data_dict_clean(data_dict, rules)
 
@@ -173,18 +176,67 @@ def edit_record(table_name, conditions_dict, is_user=False):
     except sqlite3.Error as e:
         print("Error editing data:", e)
     except Exception as e:
-        print("Error in cleaning data:", e)
+        print("Error cleaning data:", e)
     finally:
         cursor.close()
         conn.close()
 
     return success
 
-def search_table(table_name, conditions_dict, fields_required=None):
+def delete_record(table_name, conditions_dict, is_user=False):
+    if table_name in ['Log', 'Staff'] and is_user:
+        print("Cannot delete staff/log records as a user!")
+        return False
+    
+
+    conn = sqlite3.connect(OUR_DB)
+    cursor = conn.cursor()
+    success = False
+
+    try:
+        if conditions_dict:
+            where_clause = " WHERE " + " AND ".join(
+                f"{field} = ?" for field in conditions_dict
+            )
+            values = tuple(conditions_dict.values())
+        else:
+            where_clause = ""
+            values = ()
+
+        select_query = f"SELECT COUNT(*) FROM {table_name}{where_clause}"
+        cursor.execute(select_query, values)
+        num_of_rows_to_del = cursor.fetchone()[0]
+
+        prompt = f"Are you sure you want to delete {num_of_rows_to_del} records from {table_name}?"
+        confirmation = input(prompt).strip().lower()
+        while confirmation not in ['y','n']:
+            print("Please enter [Y/N].")
+            confirmation = input(prompt).strip().lower()
+
+        if confirmation == "y":
+            delete_query = f"DELETE FROM {table_name}{where_clause}"
+            cursor.execute(delete_query, values)
+            conn.commit()
+            success = True
+    except sqlite3.Error as e:
+        print("Error deleting data:", e)
+    except Exception as e:
+        print("Error cleaning data:", e)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return success
+
+def search_table(table_name, conditions_dict, fields_required=None, is_user=False):
+    if table_name == 'Staff' and is_user:
+        print("Cannot search staff records as a user!")
+        return False
+
     conn = sqlite3.connect(OUR_DB)
     cursor = conn.cursor()
 
-    results = None
+    results = []
 
     try:
         if fields_required:
@@ -198,19 +250,17 @@ def search_table(table_name, conditions_dict, fields_required=None):
             select_condition = "*"
 
         if conditions_dict:
-            where_condition = " AND ".join(
+            where_clause = " WHERE " + " AND ".join(
                 f"{field} = ?" for field in conditions_dict
             )
-
             values = tuple(conditions_dict.values())
-            query = f"SELECT {select_condition} FROM {table_name} WHERE {where_condition}"
-
-            cursor.execute(query, values)
-            results = cursor.fetchall()
         else:
-            query = f"SELECT {select_condition} FROM {table_name}"
-            cursor.execute(query)
-            results = cursor.fetchall()
+            where_clause = ""
+            values = ()
+
+        query = f"SELECT {select_condition} FROM {table_name}{where_clause}"
+        cursor.execute(query, values)
+        results = cursor.fetchall()
     except sqlite3.Error as e:
         print("Search table failed:", e)
     finally:
