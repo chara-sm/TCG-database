@@ -36,7 +36,7 @@ CREATE TABLE "Log" (
   NewValue TEXT,
   DateChanged TEXT NOT NULL,
   
-  FOREIGN KEY (ChangedByStaffID) REFERENCES Staff(StaffID)
+  FOREIGN KEY (ChangedByStaffID) REFERENCES Staff(StaffID) ON DELETE CASCADE
 );
 
 CREATE TABLE Player (
@@ -67,7 +67,7 @@ CREATE TABLE Card (
   Rarity TEXT NOT NULL,
   RegulationMark TEXT NOT NULL,
   
-  FOREIGN KEY (SetID) REFERENCES "Set"(SetID)
+  FOREIGN KEY (SetID) REFERENCES "Set"(SetID) ON DELETE CASCADE
 );
 
 CREATE TABLE PokemonCard (
@@ -82,8 +82,8 @@ CREATE TABLE Deck (
   PlayerID INTEGER NOT NULL,
   CardID INTEGER NOT NULL,
   
-  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID),
-  FOREIGN KEY (CardID) REFERENCES Card(CardID)
+  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID) ON DELETE CASCADE,
+  FOREIGN KEY (CardID) REFERENCES Card(CardID) ON DELETE CASCADE
 );
 
 CREATE TABLE Tournament (
@@ -100,8 +100,8 @@ CREATE TABLE Registration (
   WinPercentage REAL,
   IsInTopCut INTEGER,
   
-  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID),
-  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID)
+  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID) ON DELETE CASCADE,
+  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID) ON DELETE CASCADE
 );
 
 CREATE TABLE "Match" (
@@ -115,9 +115,9 @@ CREATE TABLE "Match" (
   MatchStatus TEXT NOT NULL,
   MatchDate TEXT,
   
-  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID),
-  FOREIGN KEY (Player1ID) REFERENCES Player(PlayerID),
-  FOREIGN KEY (Player2ID) REFERENCES Player(PlayerID)
+  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID) ON DELETE CASCADE,
+  FOREIGN KEY (Player1ID) REFERENCES Player(PlayerID) ON DELETE CASCADE,
+  FOREIGN KEY (Player2ID) REFERENCES Player(PlayerID) ON DELETE CASCADE
 
   CHECK (Player1ID != Player2ID)
 );
