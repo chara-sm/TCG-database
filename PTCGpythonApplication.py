@@ -370,11 +370,11 @@ Page: ({page}/{max_page})
 def manage_players():
     # inner functions
     def view_all_players():
-        search_and_display_records("Card", is_user=True)
+        search_and_display_records("Player", is_user=True)
 
     ans = None
 
-    while ans != 5:
+    while True:
         clear_terminal()
 
         print("Manager Players")
@@ -445,7 +445,7 @@ def main():
     global logged_in, current_user_email, current_user_passwordhash
 
     while True:
-    # Handle log in
+        # Handle log in
         if not logged_in:
             clear_terminal()
 
