@@ -16,7 +16,7 @@ def clear_terminal(): # searched up
     # Use 'cls' for Windows (nt) and 'clear' for Mac and Linux
     os.system('cls' if os.name == 'nt' else 'clear')
 
-def hash(text:str): # searched up how to make
+def secure_hash(text:str): # searched up how to make
     key_bytes = HASH_SECRET_KEY.encode('utf-8')
     text_bytes = text.encode('utf-8')
 
@@ -59,29 +59,29 @@ def logout():
 
     return True
 
-def get_column_types(table_name):
+def fetch_table_schema(table_name):
     schema_map = {}
 
     try:
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
-        query = f"SELECT name, type FROM PRAGMA_TABLE_INFO('{table_name}')"
+        query = f"SELECT name, type, [notnull], pk FROM PRAGMA_TABLE_INFO('{table_name}')"
         cursor.execute(query)
         rows = cursor.fetchall()
 
-        for name, col_type in rows:
+        for name, col_type, notnull, pk in rows:
             col_type = col_type.upper()
             if "INT" in col_type:
-                schema_map[name] = int
+                schema_map[name] = int, notnull, pk
             elif "REAL" in col_type:
-                schema_map[name] = float
+                schema_map[name] = float, notnull, pk
             else:
-                schema_map[name] = str
+                schema_map[name] = str, notnull, pk
     except sqlite3.Error as e:
-        print("Error fetching columns:", e)
+        print("Error fetching table schema:", e)
     except Exception as e:
-        print("Error cleaning data:", e)
+        print("Error fetching table schema:", e)
     finally:
         cursor.close()
         conn.close()
@@ -92,7 +92,7 @@ def data_dict_clean(data_dict, rules):
     clean_data_dict = {}
 
     for field, value in data_dict.items():
-        datatype = rules[field]
+        datatype = rules[field][0]
 
         if value is None:
             clean_data_dict[field] = None
@@ -131,7 +131,7 @@ def count_rows(table_name, conditions_dict={}):
 
     return num_of_rows
 
-def add_record(table_name, data_dict, is_user=False):
+def add_record(table_name, is_user=False):
     if table_name in ['Log', 'Staff'] and is_user:
         print("Cannot add staff/log records as a user!")
         return False
@@ -142,10 +142,22 @@ def add_record(table_name, data_dict, is_user=False):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
-        rules = get_column_types(table_name)
+        rules = fetch_table_schema(table_name)
+        data_dict = {}
+
+        for col, (datatype, notnull) in rules.items():
+            required = " [REQUIRED]" if notnull else ""
+            field_value = input(f"{col} [{datatype}]{required}: ").strip()
+
+            if field_value:
+                if field_value.upper() == "NULL":
+                    data_dict[col] = None
+                elif "password" in col.lower():
+                    data_dict[col] = str(secure_hash(field_value))
+                else:
+                    data_dict[col] = field_value
 
         clean_data_dict = data_dict_clean(data_dict, rules)
-
         insert_fields = ", ".join(clean_data_dict)
 
         values = tuple(clean_data_dict.values())
@@ -179,7 +191,7 @@ def edit_record(table_name, conditions_dict, is_user=False):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
-        rules = get_column_types(table_name)
+        rules = fetch_table_schema(table_name)
 
         for col in rules.keys():
             field_value = input(f"{col}: ").strip()
@@ -320,7 +332,7 @@ def display_records(records, col_names=None, table_name=None):
     if col_names:
         col_names = [col_names] if isinstance(col_names, str) else col_names
     elif table_name:
-        col_names = list(get_column_types(table_name).keys())
+        col_names = list(fetch_table_schema(table_name).keys())
     else:
         print("Error in displaying records: No column names or table name was given!")
         return success
@@ -372,6 +384,9 @@ def manage_players():
     def view_all_players():
         search_and_display_records("Player", is_user=True)
 
+    def register_player():
+        add_record("Player", is_user=True)
+
     ans = None
 
     while True:
@@ -394,6 +409,8 @@ def manage_players():
                     return
                 case 1:
                     view_all_players()
+                case 2:
+                    register_player()
                 case _:
                     print("Not a valid option!")
                     input("> Press enter to continue ")
@@ -460,7 +477,7 @@ def main():
 
             # Sanitise input
             current_user_email = current_user_email.strip().lower()
-            current_user_passwordhash = str(hash(current_user_passwordhash.strip()))
+            current_user_passwordhash = str(secure_hash(current_user_passwordhash.strip()))
 
             # Attempt login
             logged_in = login(current_user_email, current_user_passwordhash)
