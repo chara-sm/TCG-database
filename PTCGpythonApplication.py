@@ -1,5 +1,6 @@
 import sqlite3, hashlib, hmac, os, math
 from tabulate import tabulate
+from datetime import date
 
 # # # Constants
 OUR_DB = "PTCGmanager.db"
@@ -66,18 +67,38 @@ def fetch_table_schema(table_name):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
-        query = f"SELECT name, type, [notnull], pk FROM PRAGMA_TABLE_INFO('{table_name}')"
-        cursor.execute(query)
+        cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
+        row_sql = cursor.fetchone()
+        table_sql = row_sql[0].upper() if row_sql and row_sql[0] else ""
+        has_autoincrement = "AUTOINCREMENT" in table_sql
+
+        cursor.execute(f"PRAGMA index_list({table_name})")
+        indexes = cursor.fetchall()
+        
+        unique_columns = set()
+        for idx in indexes:
+            # idx[2] is the unique flag
+            if idx[2] == 1:
+                idx_name = idx[1]
+                cursor.execute(f"PRAGMA index_info({idx_name})")
+                for col_row in cursor.fetchall():
+                    # col_row[2] contains the column name
+                    unique_columns.add(col_row[2])
+
+        cursor.execute(f"PRAGMA table_info({table_name})")
         rows = cursor.fetchall()
 
-        for name, col_type, notnull, pk in rows:
+        for col_id, name, col_type, notnull, dflt_value, pk in rows:
             col_type = col_type.upper()
+            is_unique = 1 if name in unique_columns or pk == 1 else 0
+            is_autoincrement = 1 if pk == 1 and has_autoincrement else 0
+
             if "INT" in col_type:
-                schema_map[name] = int, notnull, pk
+                schema_map[name] = int, notnull, pk, is_unique, is_autoincrement, dflt_value
             elif "REAL" in col_type:
-                schema_map[name] = float, notnull, pk
+                schema_map[name] = float, notnull, pk, is_unique, is_autoincrement, dflt_value
             else:
-                schema_map[name] = str, notnull, pk
+                schema_map[name] = str, notnull, pk, is_unique, is_autoincrement, dflt_value
     except sqlite3.Error as e:
         print("Error fetching table schema:", e)
     except Exception as e:
@@ -131,10 +152,13 @@ def count_rows(table_name, conditions_dict={}):
 
     return num_of_rows
 
-def add_record(table_name, is_user=False):
+def add_record(table_name, data_dict=None, is_user=False):
     if table_name in ['Log', 'Staff'] and is_user:
         print("Cannot add staff/log records as a user!")
         return False
+
+    if data_dict is None:
+        data_dict = {}
 
     success = False
 
@@ -142,20 +166,76 @@ def add_record(table_name, is_user=False):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
+        cursor.execute("PRAGMA foreign_keys = ON")
+
         rules = fetch_table_schema(table_name)
-        data_dict = {}
 
-        for col, (datatype, notnull) in rules.items():
-            required = " [REQUIRED]" if notnull else ""
-            field_value = input(f"{col} [{datatype}]{required}: ").strip()
+        if is_user:
+            terminal_output = ""
 
-            if field_value:
-                if field_value.upper() == "NULL":
-                    data_dict[col] = None
-                elif "password" in col.lower():
-                    data_dict[col] = str(secure_hash(field_value))
-                else:
+            for col, (datatype, notnull, pk, is_unique, is_autoincrement, dflt_value) in rules.items():
+                if is_autoincrement:
+                    continue
+
+                while True:
+                    clear_terminal()
+                    if terminal_output != "":
+                        print(terminal_output)
+
+                    has_dflt = dflt_value is not None
+                    is_required = (notnull or pk) and not has_dflt
+                    required_text = " [REQUIRED]" if is_required else ""
+
+                    dflt_value = date.today().isoformat() if dflt_value == "CURRENT_DATE" else dflt_value
+                    dflt_text = f" [DEFAULTS TO: '{dflt_value}']" if has_dflt else ""
+
+                    unique_text = f" [UNIQUE]" if is_unique else ""
+
+                    prompt = f"{col} [{datatype.__name__.upper()}]{required_text}{unique_text}{dflt_text}: "
+
+                    field_value = input(prompt).strip()
+
+                    if field_value == "":
+                        if is_required:
+                            print(f"[{col}] is required!")
+                            input("> Press enter to continue ")
+                            continue
+                        else:
+                            terminal_output += f"{prompt}{dflt_value}\n"
+                            break
+
+                    if field_value.upper() == "NULL":
+                        if notnull or pk:
+                            print(f"[{col}] is required!")
+                            input("> Press enter to continue ")
+                            continue
+                        field_value = None
+
+                    if field_value is not None:
+                        if "password" in col.lower():
+                            field_value = str(secure_hash(field_value))
+                        else:
+                            try:
+                                field_value = datatype(field_value)
+                            except ValueError as e:
+                                print(f"Wrong datatype! Expected: {datatype.__name__.upper()}")
+                                input("> Press enter to continue ")
+                                continue
+
+                    if is_unique and field_value is not None:
+                        exists_query = f'SELECT EXISTS (SELECT 1 FROM "{table_name}" WHERE {col} = ?)'
+                        cursor.execute(exists_query, (field_value,))
+                        exists = bool(cursor.fetchone()[0])
+
+                        if exists:
+                            print(f"'{col} = {field_value}' already exists in {table_name}!")
+                            print("Please enter another value.")
+                            input("> Press enter to continue ")
+                            continue
+
                     data_dict[col] = field_value
+                    terminal_output += f"{prompt}{field_value}\n"
+                    break
 
         clean_data_dict = data_dict_clean(data_dict, rules)
         insert_fields = ", ".join(clean_data_dict)
@@ -165,7 +245,7 @@ def add_record(table_name, is_user=False):
             ["?"] * len(values) 
         )
 
-        query = f"INSERT INTO {table_name} ({insert_fields}) VALUES ({values_placeholder})"
+        query = f'INSERT INTO "{table_name}" ({insert_fields}) VALUES ({values_placeholder})'
         cursor.execute(query, values)
         conn.commit()
         success = True
@@ -256,7 +336,7 @@ def delete_record(table_name, conditions_dict, is_user=False):
 
         num_of_rows_to_del = count_rows(table_name=table_name, conditions_dict=conditions_dict)
 
-        prompt = f"Are you sure you want to delete {num_of_rows_to_del} records from {table_name}?"
+        prompt = f"Are you sure you want to delete {num_of_rows_to_del} records from {table_name}? [Y/N]"
         confirmation = input(prompt).strip().lower()
         while confirmation not in ['y','n']:
             print("Please enter [Y/N].")
@@ -338,7 +418,7 @@ def display_records(records, col_names=None, table_name=None):
         return success
 
     try:
-        table = tabulate(records, headers=col_names, tablefmt="fancy_grid")
+        table = tabulate(records, headers=col_names, tablefmt="fancy_grid", maxcolwidths=20)
         print(table)
         success = True
     except Exception as e:
@@ -346,13 +426,13 @@ def display_records(records, col_names=None, table_name=None):
 
     return success
 
-def search_and_display_records(table_name, conditions_dict={}, limit=10, fields_required=[], is_user=False):
+def search_and_display_records(table_name, conditions_dict={}, limit=10, fields_required=None, is_user=False):
     try:
         page = 1
         max_page = math.ceil(count_rows(table_name=table_name, conditions_dict=conditions_dict)/limit)
-        ans = None
+        ans = ""
 
-        while ans != "back":
+        while not "back" in ans:
             clear_terminal()
             current_offset = limit * (page-1)
 
@@ -385,9 +465,44 @@ def manage_players():
         search_and_display_records("Player", is_user=True)
 
     def register_player():
-        add_record("Player", is_user=True)
+        success = add_record("Player", is_user=True)
+        if success:
+            print("Successfully registered player!")
+            input("> Press enter to continue ")
+        else:
+            print("Error registering player.")
+            input("> Press enter to continue ")
 
-    ans = None
+    def delete_player():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter PlayerID to delete: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"PlayerID": int(user_ans)}
+                    success = delete_record("Player", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully deleted player ({user_ans})")
+                    else:
+                        print(f"\nFailed to delete player ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except ValueError as e:
+                print("PlayerID must be an integer:", e)
+                input("> Press enter to continue ")
+
+    ans = ""
 
     while True:
         clear_terminal()
@@ -411,6 +526,10 @@ def manage_players():
                     view_all_players()
                 case 2:
                     register_player()
+                case 3:
+                    pass
+                case 4:
+                    delete_player()
                 case _:
                     print("Not a valid option!")
                     input("> Press enter to continue ")
@@ -449,6 +568,8 @@ def home_page():
         match ans:
             case 1:
                 manage_players()
+            case 7:
+                search_and_display_records("Log")
             case 8:
                 logout()
             case _:
