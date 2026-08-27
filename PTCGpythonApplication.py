@@ -171,27 +171,30 @@ def add_record(table_name, data_dict=None, is_user=False):
         rules = fetch_table_schema(table_name)
 
         if is_user:
-            terminal_output = ""
+            terminal_output = f"Creating {table_name}:"
 
             for col, (datatype, notnull, pk, is_unique, is_autoincrement, dflt_value) in rules.items():
+                has_dflt = dflt_value is not None
+                is_required = (notnull or pk) and not has_dflt
+                required_text = " [REQUIRED]" if is_required else ""
+
+                dflt_value = date.today().isoformat() if dflt_value == "CURRENT_DATE" else dflt_value
+                dflt_text = f" [DEFAULTS TO: '{dflt_value}']" if has_dflt else ""
+                unique_text = f" [UNIQUE]" if is_unique else ""
+
+                prompt = f"{col} [{datatype.__name__.upper()}]{required_text}{unique_text}{dflt_text}: "
+
                 if is_autoincrement:
+                    next_id_query = f"SELECT seq + 1 FROM sqlite_sequence WHERE name = ?"
+                    cursor.execute(next_id_query, (table_name,))
+                    next_id = cursor.fetchone()[0]
+
+                    terminal_output += f"\n{prompt}{next_id}"
                     continue
 
                 while True:
                     clear_terminal()
-                    if terminal_output != "":
-                        print(terminal_output)
-
-                    has_dflt = dflt_value is not None
-                    is_required = (notnull or pk) and not has_dflt
-                    required_text = " [REQUIRED]" if is_required else ""
-
-                    dflt_value = date.today().isoformat() if dflt_value == "CURRENT_DATE" else dflt_value
-                    dflt_text = f" [DEFAULTS TO: '{dflt_value}']" if has_dflt else ""
-
-                    unique_text = f" [UNIQUE]" if is_unique else ""
-
-                    prompt = f"{col} [{datatype.__name__.upper()}]{required_text}{unique_text}{dflt_text}: "
+                    print(terminal_output)
 
                     field_value = input(prompt).strip()
 
@@ -201,7 +204,7 @@ def add_record(table_name, data_dict=None, is_user=False):
                             input("> Press enter to continue ")
                             continue
                         else:
-                            terminal_output += f"{prompt}{dflt_value}\n"
+                            terminal_output += f"\n{prompt}{dflt_value}"
                             break
 
                     if field_value.upper() == "NULL":
@@ -234,7 +237,9 @@ def add_record(table_name, data_dict=None, is_user=False):
                             continue
 
                     data_dict[col] = field_value
-                    terminal_output += f"{prompt}{field_value}\n"
+
+                    value_text = "NULL" if field_value is None else field_value
+                    terminal_output += f"\n{prompt}{value_text}"
                     break
 
         clean_data_dict = data_dict_clean(data_dict, rules)
@@ -250,37 +255,98 @@ def add_record(table_name, data_dict=None, is_user=False):
         conn.commit()
         success = True
     except sqlite3.Error as e:
-        print("Error inserting data:", e)
+        print("Error adding record (SQL):", e)
     except Exception as e:
-        print("Error cleaning data:", e)
+        print("Error adding record:", e)
     finally:
         cursor.close()
         conn.close()
 
     return success
 
-def edit_record(table_name, conditions_dict, is_user=False):
+def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
     if table_name in ['Log', 'Staff'] and is_user:
         print("Cannot edit staff/log records as a user!")
         return False
 
+    if data_dict is None:
+        data_dict = {}
+
     success = False
-    data_dict = {}
 
     try:
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
+        where_values = tuple(conditions_dict.values())
+        where_clause = " WHERE " + " AND ".join(
+            f"{field} = ?" for field in conditions_dict.keys()
+        )
+
         rules = fetch_table_schema(table_name)
 
-        for col in rules.keys():
-            field_value = input(f"{col}: ").strip()
+        if is_user:
+            terminal_output = "Editing [" + " = ".join(
+                f"{field} = {value}" for field, value in conditions_dict.items()
+            ) + "]"
+            
+            for col, (datatype, notnull, pk, is_unique, is_autoincrement, dflt_value) in rules.items():
+                current_value_query = f"SELECT {col} FROM {table_name}{where_clause}"
+                cursor.execute(current_value_query, where_values)
+                current_value = cursor.fetchone()[0]
 
-            if field_value:
-                if field_value.upper() == "NULL":
-                    data_dict[col] = None
-                else:
+                current_value_text = f" [CURRENT: {current_value}]"
+                unique_text = f" [UNIQUE]" if is_unique else ""
+                prompt = f"{col} [{datatype.__name__.upper()}]{current_value_text}{unique_text}: "
+
+                if is_autoincrement:
+                    terminal_output += f"\n{prompt}{current_value}"
+                    continue
+
+                while True:
+                    clear_terminal()
+                    print(terminal_output)
+
+                    field_value = input(prompt).strip()
+
+                    if field_value == "":
+                        terminal_output += f"\n{prompt}{current_value}"
+                        break
+
+                    if field_value.upper() == "NULL":
+                        if notnull or pk:
+                            print(f"[{col}] is required!")
+                            input("> Press enter to continue ")
+                            continue
+                        field_value = None
+
+                    if field_value is not None:
+                        if "password" in col.lower():
+                            field_value = str(secure_hash(field_value))
+                        else:
+                            try:
+                                field_value = datatype(field_value)
+                            except ValueError as e:
+                                print(f"Wrong datatype! Expected: {datatype.__name__.upper()}")
+                                input("> Press enter to continue ")
+                                continue
+
+                    if is_unique and field_value is not None:
+                        exists_query = f'SELECT EXISTS (SELECT 1 FROM "{table_name}" WHERE {col} = ?)'
+                        cursor.execute(exists_query, (field_value,))
+                        exists = bool(cursor.fetchone()[0])
+
+                        if exists:
+                            print(f"'{col} = {field_value}' already exists in {table_name}!")
+                            print("Please enter another value.")
+                            input("> Press enter to continue ")
+                            continue
+
                     data_dict[col] = field_value
+
+                    value_text = "NULL" if field_value is None else field_value
+                    terminal_output += f"\n{prompt}{value_text}"
+                    break
 
         clean_data_dict = data_dict_clean(data_dict, rules)
 
@@ -293,21 +359,16 @@ def edit_record(table_name, conditions_dict, is_user=False):
             f"{field} = ?" for field in clean_data_dict.keys()
         )
 
-        where_values = tuple(conditions_dict.values())
-        where_condition = " AND ".join(
-            f"{field} = ?" for field in conditions_dict.keys()
-        )
-
         values = set_values + where_values
 
-        query = f"UPDATE {table_name} SET {set_placeholder} WHERE {where_condition}"
+        query = f"UPDATE {table_name} SET {set_placeholder}{where_clause}"
         cursor.execute(query, values)
         conn.commit()
         success = True
     except sqlite3.Error as e:
-        print("Error editing data:", e)
+        print("Error editing data (SQL):", e)
     except Exception as e:
-        print("Error cleaning data:", e)
+        print("Error editing data:", e)
     finally:
         cursor.close()
         conn.close()
@@ -336,7 +397,7 @@ def delete_record(table_name, conditions_dict, is_user=False):
 
         num_of_rows_to_del = count_rows(table_name=table_name, conditions_dict=conditions_dict)
 
-        prompt = f"Are you sure you want to delete {num_of_rows_to_del} records from {table_name}? [Y/N]"
+        prompt = f"Are you sure you want to delete {num_of_rows_to_del} records from {table_name}? [Y/N]\n> "
         confirmation = input(prompt).strip().lower()
         while confirmation not in ['y','n']:
             print("Please enter [Y/N].")
@@ -432,7 +493,7 @@ def search_and_display_records(table_name, conditions_dict={}, limit=10, fields_
         max_page = math.ceil(count_rows(table_name=table_name, conditions_dict=conditions_dict)/limit)
         ans = ""
 
-        while not "back" in ans:
+        while True:
             clear_terminal()
             current_offset = limit * (page-1)
 
@@ -451,7 +512,7 @@ Page: ({page}/{max_page})
                     page += 1
                 case _ if ans.isdigit() and 0 < int(ans) <= max_page:
                     page = int(ans)
-                case "back":
+                case _ if "back" in ans:
                     return
                 case _:
                     print("Not a valid option/page!")
@@ -472,6 +533,35 @@ def manage_players():
         else:
             print("Error registering player.")
             input("> Press enter to continue ")
+
+    def edit_player():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter PlayerID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"PlayerID": int(user_ans)}
+                    success = edit_record("Player", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited player ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit player ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except ValueError as e:
+                print("PlayerID must be an integer:", e)
+                input("> Press enter to continue ")
 
     def delete_player():
         while True:
@@ -527,7 +617,7 @@ def manage_players():
                 case 2:
                     register_player()
                 case 3:
-                    pass
+                    edit_player()
                 case 4:
                     delete_player()
                 case _:
