@@ -520,6 +520,54 @@ Page: ({page}/{max_page})
     except Exception as e:
         print("Error in displaying tables in page view:", e)
 
+def build_conditions_dict(table_name):
+    rules = fetch_table_schema(table_name)
+    conditions_dict = {}
+
+    terminal_output = "Conditions:"
+
+    try:
+        for col, (datatype, notnull, pk, is_unique, is_autoincrement, dflt_value) in rules.items():
+            prompt = f"{col} [{datatype.__name__.upper()}]: "
+
+            while True:
+                clear_terminal()
+                print(terminal_output)
+
+                field_value = input(prompt).strip()
+
+                if field_value == "":
+                    terminal_output += f"\n{prompt}"
+                    break
+
+                if field_value.upper() == "NULL":
+                    if notnull or pk:
+                        print(f"[{col}] is required!")
+                        input("> Press enter to continue ")
+                        continue
+                    field_value = None
+
+                if field_value is not None:
+                    if "password" in col.lower():
+                        field_value = str(secure_hash(field_value))
+                    else:
+                        try:
+                            field_value = datatype(field_value)
+                        except ValueError as e:
+                            print(f"Wrong datatype! Expected: {datatype.__name__.upper()}")
+                            input("> Press enter to continue ")
+                            continue
+
+                conditions_dict[col] = field_value
+
+                value_text = "NULL" if field_value is None else field_value
+                terminal_output += f"\n{prompt}{value_text}"
+                break
+    except Exception as e:
+        print(f"Error building conditions dictionary:", e)
+
+    return conditions_dict
+
 def manage_players():
     # inner functions
     def view_all_players():
@@ -592,6 +640,10 @@ def manage_players():
                 print("PlayerID must be an integer:", e)
                 input("> Press enter to continue ")
 
+    def search_for_players():
+        conditions_dict = build_conditions_dict("Player")
+        search_and_display_records("Player", conditions_dict=conditions_dict, is_user=True)
+
     ans = ""
 
     while True:
@@ -603,7 +655,8 @@ def manage_players():
 1. View all players
 2. Register a new player
 3. Edit an existing player's data
-4. Delete an existing player""")
+4. Delete an existing player
+5. Search for player(s)""")
         print(SEPARATOR)
 
         try:
@@ -620,6 +673,122 @@ def manage_players():
                     edit_player()
                 case 4:
                     delete_player()
+                case 5:
+                    search_for_players()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
+def manage_cards():
+    # inner functions
+    def view_all_cards():
+        search_and_display_records("Card", is_user=True)
+
+    def add_new_card():
+        success = add_record("Card", is_user=True)
+        if success:
+            print("Successfully adding card!")
+            input("> Press enter to continue ")
+        else:
+            print("Error adding card.")
+            input("> Press enter to continue ")
+
+    def edit_card():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter CardID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"CardID": int(user_ans)}
+                    success = edit_record("Card", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited card ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit card ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except ValueError as e:
+                print("CardID must be an integer:", e)
+                input("> Press enter to continue ")
+
+    def delete_card():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter CardID to delete: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"CardID": int(user_ans)}
+                    success = delete_record("Card", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully deleted card ({user_ans})")
+                    else:
+                        print(f"\nFailed to delete card ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except ValueError as e:
+                print("PlayerID must be an integer:", e)
+                input("> Press enter to continue ")
+
+    def search_for_cards():
+        conditions_dict = build_conditions_dict("Card")
+        search_and_display_records("Card", conditions_dict=conditions_dict, is_user=True)
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Cards")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all cards
+2. Add a new card
+3. Edit an existing card
+4. Delete an existing card
+5. Search for card(s)""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_cards()
+                case 2:
+                    add_new_card()
+                case 3:
+                    edit_card()
+                case 4:
+                    delete_card()
+                case 5:
+                    search_for_cards()
                 case _:
                     print("Not a valid option!")
                     input("> Press enter to continue ")
@@ -658,6 +827,8 @@ def home_page():
         match ans:
             case 1:
                 manage_players()
+            case 2:
+                manage_cards()
             case 7:
                 search_and_display_records("Log")
             case 8:
