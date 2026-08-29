@@ -29,12 +29,13 @@ CREATE TABLE "Log" (
   LogID INTEGER PRIMARY KEY AUTOINCREMENT,
   ChangedByStaffID INTEGER,
   TableName TEXT NOT NULL,
-  RecordID TEXT NOT NULL,
+  RecordID TEXT,
   Field TEXT,
   "Action" TEXT NOT NULL,
   OldValue TEXT,
   NewValue TEXT,
   DateChanged TEXT NOT NULL DEFAULT CURRENT_DATE,
+  TimeChanged TEXT NOT NULL DEFAULT (strftime('%H:%M:%S', 'now', '+8 hours')),
   
   FOREIGN KEY (ChangedByStaffID) REFERENCES Staff(StaffID)
 );
@@ -62,12 +63,12 @@ CREATE TABLE "Set" (
 CREATE TABLE Card (
   CardID INTEGER PRIMARY KEY AUTOINCREMENT,
   SetID TEXT NOT NULL,
-  Name TEXT NOT NULL,
+  "Name" TEXT NOT NULL,
   CollectorNo INTEGER NOT NULL,
   Rarity TEXT NOT NULL,
   RegulationMark TEXT NOT NULL,
   
-  FOREIGN KEY (SetID) REFERENCES "Set"(SetID) ON UPDATE CASCADE
+  FOREIGN KEY (SetID) REFERENCES "Set"(SetID) ON DELETE CASCADE ON UPDATE CASCADE
 );
 
 CREATE TABLE PokemonCard (
@@ -76,7 +77,7 @@ CREATE TABLE PokemonCard (
   PokemonType TEXT NOT NULL,
   Stage TEXT NOT NULL,
 
-  FOREIGN KEY (CardID) REFERENCES Card(CardID)
+  FOREIGN KEY (CardID) REFERENCES Card(CardID) ON DELETE CASCADE
 );
 
 CREATE TABLE Deck (
@@ -84,8 +85,8 @@ CREATE TABLE Deck (
   PlayerID INTEGER NOT NULL,
   CardID INTEGER NOT NULL,
   
-  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID),
-  FOREIGN KEY (CardID) REFERENCES Card(CardID)
+  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID) ON DELETE CASCADE,
+  FOREIGN KEY (CardID) REFERENCES Card(CardID) ON DELETE CASCADE
 );
 
 CREATE TABLE Tournament (
@@ -104,8 +105,8 @@ CREATE TABLE Registration (
   WinPercentage REAL,
   IsInTopCut INTEGER,
   
-  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID),
-  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID)
+  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID) ON DELETE CASCADE,
+  FOREIGN KEY (PlayerID) REFERENCES Player(PlayerID) ON DELETE CASCADE
 );
 
 CREATE TABLE "Match" (
@@ -119,9 +120,9 @@ CREATE TABLE "Match" (
   MatchStatus TEXT NOT NULL DEFAULT 'Scheduled',
   MatchDate TEXT DEFAULT CURRENT_DATE,
   
-  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID),
-  FOREIGN KEY (Player1ID) REFERENCES Player(PlayerID),
-  FOREIGN KEY (Player2ID) REFERENCES Player(PlayerID)
+  FOREIGN KEY (TournamentID) REFERENCES Tournament(TournamentID) ON DELETE CASCADE,
+  FOREIGN KEY (Player1ID) REFERENCES Player(PlayerID) ON DELETE CASCADE,
+  FOREIGN KEY (Player2ID) REFERENCES Player(PlayerID) ON DELETE CASCADE,
 
   CHECK (Player1ID != Player2ID),
   CHECK (MatchStatus IN ('Scheduled', 'Ongoing', 'Completed'))

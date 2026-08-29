@@ -11,6 +11,7 @@ SEPARATOR = "---------------------------------"
 logged_in = False
 current_user_email = ""
 current_user_passwordhash = ""
+legal_regulation_marks = ["H", "I", "J"]
 
 # # # Functions
 def clear_terminal(): # searched up
@@ -60,6 +61,33 @@ def logout():
 
     return True
 
+def fetch_current_staff_id():
+    global current_user_email, current_user_passwordhash
+    staff_id = None
+
+    try:
+        conn = sqlite3.connect(OUR_DB)
+        cursor = conn.cursor()
+
+        query = f"""
+            SELECT StaffID FROM Staff
+            WHERE
+            Email = ? AND PasswordHash = ?
+        """
+
+        cursor.execute(query, (current_user_email, current_user_passwordhash))
+        staff_id = cursor.fetchone()[0]
+
+    except sqlite3.Error as e:
+        print("Error fetching StaffID (SQL):", e)
+    except Exception as e:
+        print("Error fetching StaffID:", e)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return staff_id
+
 def fetch_table_schema(table_name):
     schema_map = {}
 
@@ -72,7 +100,7 @@ def fetch_table_schema(table_name):
         table_sql = row_sql[0].upper() if row_sql and row_sql[0] else ""
         has_autoincrement = "AUTOINCREMENT" in table_sql
 
-        cursor.execute(f"PRAGMA index_list({table_name})")
+        cursor.execute(f'PRAGMA index_list("{table_name}")')
         indexes = cursor.fetchall()
         
         unique_columns = set()
@@ -85,7 +113,7 @@ def fetch_table_schema(table_name):
                     # col_row[2] contains the column name
                     unique_columns.add(col_row[2])
 
-        cursor.execute(f"PRAGMA table_info({table_name})")
+        cursor.execute(f'PRAGMA table_info("{table_name}")')
         rows = cursor.fetchall()
 
         for col_id, name, col_type, notnull, dflt_value, pk in rows:
@@ -139,7 +167,7 @@ def count_rows(table_name, conditions_dict={}):
             where_clause = ""
             values = ()
 
-        select_query = f"SELECT COUNT(*) FROM {table_name}{where_clause}"
+        select_query = f'SELECT COUNT(*) FROM "{table_name}"{where_clause}'
         cursor.execute(select_query, values)
         num_of_rows = cursor.fetchone()[0]
     except sqlite3.Error as e:
@@ -151,6 +179,30 @@ def count_rows(table_name, conditions_dict={}):
         conn.close()
 
     return num_of_rows
+
+def add_log(table_name, action, record_id=None, changed_by_staff_id=None, field=None, old_value=None, new_value=None):
+    success = False
+
+    try:
+        conn = sqlite3.connect(OUR_DB)
+        cursor = conn.cursor()
+
+        values = (changed_by_staff_id, table_name, record_id, field, action, old_value, new_value)
+
+        query = f'INSERT INTO Log (ChangedByStaffID, TableName, RecordID, Field, "Action", OldValue, NewValue) VALUES (?,?,?,?,?,?,?)'
+        cursor.execute(query, values)
+        conn.commit()
+
+        success = True
+    except sqlite3.Error as e:
+        print("Error adding log (SQL):", e)
+    except Exception as e:
+        print("Error adding log:", e)
+    finally:
+        cursor.close()
+        conn.close()
+
+    return success
 
 def add_record(table_name, data_dict=None, is_user=False):
     if table_name in ['Log', 'Staff'] and is_user:
@@ -169,6 +221,7 @@ def add_record(table_name, data_dict=None, is_user=False):
         cursor.execute("PRAGMA foreign_keys = ON")
 
         rules = fetch_table_schema(table_name)
+        pk_value = None
 
         if is_user:
             terminal_output = f"Creating {table_name}:"
@@ -190,6 +243,7 @@ def add_record(table_name, data_dict=None, is_user=False):
                     next_id = cursor.fetchone()[0]
 
                     terminal_output += f"\n{prompt}{next_id}"
+                    pk_value = next_id
                     continue
 
                 while True:
@@ -240,6 +294,9 @@ def add_record(table_name, data_dict=None, is_user=False):
 
                     value_text = "NULL" if field_value is None else field_value
                     terminal_output += f"\n{prompt}{value_text}"
+
+                    if pk:
+                        pk_value = field_value
                     break
 
         clean_data_dict = data_dict_clean(data_dict, rules)
@@ -253,6 +310,14 @@ def add_record(table_name, data_dict=None, is_user=False):
         query = f'INSERT INTO "{table_name}" ({insert_fields}) VALUES ({values_placeholder})'
         cursor.execute(query, values)
         conn.commit()
+
+        add_log(
+            table_name=table_name,
+            record_id=pk_value,
+            action="INSERT",
+            changed_by_staff_id=fetch_current_staff_id()
+        )
+
         success = True
     except sqlite3.Error as e:
         print("Error adding record (SQL):", e)
@@ -271,6 +336,7 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
 
     if data_dict is None:
         data_dict = {}
+    old_data_dict = {}
 
     success = False
 
@@ -278,12 +344,15 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
+        cursor.execute("PRAGMA foreign_keys = ON")
+
         where_values = tuple(conditions_dict.values())
         where_clause = " WHERE " + " AND ".join(
             f"{field} = ?" for field in conditions_dict.keys()
         )
 
         rules = fetch_table_schema(table_name)
+        pk_value = None
 
         if is_user:
             terminal_output = "Editing [" + " = ".join(
@@ -291,9 +360,11 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
             ) + "]"
             
             for col, (datatype, notnull, pk, is_unique, is_autoincrement, dflt_value) in rules.items():
-                current_value_query = f"SELECT {col} FROM {table_name}{where_clause}"
+                current_value_query = f'SELECT {col} FROM "{table_name}"{where_clause}'
                 cursor.execute(current_value_query, where_values)
                 current_value = cursor.fetchone()[0]
+
+                old_data_dict[col] = current_value
 
                 current_value_text = f" [CURRENT: {current_value}]"
                 unique_text = f" [UNIQUE]" if is_unique else ""
@@ -301,6 +372,7 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
 
                 if is_autoincrement:
                     terminal_output += f"\n{prompt}{current_value}"
+                    pk_value = current_value
                     continue
 
                 while True:
@@ -332,8 +404,12 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
                                 continue
 
                     if is_unique and field_value is not None:
-                        exists_query = f'SELECT EXISTS (SELECT 1 FROM "{table_name}" WHERE {col} = ?)'
-                        cursor.execute(exists_query, (field_value,))
+                        where_not_clause = " WHERE NOT " + " AND NOT ".join(
+                            f"{field} = ?" for field in conditions_dict.keys()
+                        )
+
+                        exists_query = f'SELECT EXISTS (SELECT 1 FROM "{table_name}"{where_not_clause} AND {col} = ?)'
+                        cursor.execute(exists_query, where_values+ (field_value,))
                         exists = bool(cursor.fetchone()[0])
 
                         if exists:
@@ -346,6 +422,9 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
 
                     value_text = "NULL" if field_value is None else field_value
                     terminal_output += f"\n{prompt}{value_text}"
+
+                    if pk:
+                        pk_value = field_value
                     break
 
         clean_data_dict = data_dict_clean(data_dict, rules)
@@ -361,9 +440,21 @@ def edit_record(table_name, conditions_dict, data_dict=None, is_user=False):
 
         values = set_values + where_values
 
-        query = f"UPDATE {table_name} SET {set_placeholder}{where_clause}"
+        query = f'UPDATE "{table_name}" SET {set_placeholder}{where_clause}'
         cursor.execute(query, values)
         conn.commit()
+
+        for field, new_value in clean_data_dict.items():
+            add_log(
+                table_name=table_name,
+                record_id=pk_value,
+                action="UPDATE",
+                changed_by_staff_id=fetch_current_staff_id(),
+                field=field,
+                old_value=old_data_dict[field],
+                new_value=new_value
+            )
+
         success = True
     except sqlite3.Error as e:
         print("Error editing data (SQL):", e)
@@ -386,14 +477,16 @@ def delete_record(table_name, conditions_dict, is_user=False):
         conn = sqlite3.connect(OUR_DB)
         cursor = conn.cursor()
 
+        cursor.execute("PRAGMA foreign_keys = ON")
+
         if conditions_dict:
             where_clause = " WHERE " + " AND ".join(
                 f"{field} = ?" for field in conditions_dict
             )
-            values = tuple(conditions_dict.values())
+            where_values = tuple(conditions_dict.values())
         else:
             where_clause = ""
-            values = ()
+            where_values = ()
 
         num_of_rows_to_del = count_rows(table_name=table_name, conditions_dict=conditions_dict)
 
@@ -404,9 +497,22 @@ def delete_record(table_name, conditions_dict, is_user=False):
             confirmation = input(prompt).strip().lower()
 
         if confirmation == "y":
-            delete_query = f"DELETE FROM {table_name}{where_clause}"
-            cursor.execute(delete_query, values)
+            select_query = f'SELECT "{table_name}ID" FROM "{table_name}"{where_clause}'
+            cursor.execute(select_query, where_values)
+            deleted_ids = [row[0] for row in cursor.fetchall()]
+
+            delete_query = f'DELETE FROM "{table_name}"{where_clause}'
+            cursor.execute(delete_query, where_values)
             conn.commit()
+
+            for id in deleted_ids:
+                add_log(
+                    table_name=table_name,
+                    record_id=id,
+                    action="DELETE",
+                    changed_by_staff_id=fetch_current_staff_id()
+                )
+
             success = True
     except sqlite3.Error as e:
         print("Error deleting data:", e)
@@ -456,7 +562,7 @@ def search_table(table_name, conditions_dict={}, limit=10, offset=0, fields_requ
         else:
             offset_clause = ""
 
-        query = f"SELECT {select_condition} FROM {table_name}{where_clause}{limit_clause}{offset_clause}"
+        query = f'SELECT {select_condition} FROM "{table_name}"{where_clause}{limit_clause}{offset_clause}'
         cursor.execute(query, values)
         results = cursor.fetchall()
     except sqlite3.Error as e:
@@ -489,8 +595,19 @@ def display_records(records, col_names=None, table_name=None):
 
 def search_and_display_records(table_name, conditions_dict={}, limit=10, fields_required=None, is_user=False):
     try:
-        page = 1
+        if conditions_dict:
+            action = "SEARCH"
+        else:
+            action = "VIEW"
+
+        add_log(
+            table_name=table_name,
+            action=action,
+            changed_by_staff_id=fetch_current_staff_id(),
+        )
+
         max_page = math.ceil(count_rows(table_name=table_name, conditions_dict=conditions_dict)/limit)
+        page = 1 if max_page > 0 else 0
         ans = ""
 
         while True:
@@ -592,11 +709,12 @@ def manage_players():
 
                 if "back" in user_ans:
                     return
+                elif user_ans == "":
+                    print("Please enter a PlayerID.")
+                    input("> Press enter to continue ")
+                    continue
                 else:
-                    if user_ans == "":
-                        condition_dict = {}
-                    else:
-                        condition_dict = {"PlayerID": int(user_ans)}
+                    condition_dict = {"PlayerID": int(user_ans)}
                     success = edit_record("Player", conditions_dict=condition_dict, is_user=True)
 
                     if success:
@@ -609,6 +727,9 @@ def manage_players():
                     
             except ValueError as e:
                 print("PlayerID must be an integer:", e)
+                input("> Press enter to continue ")
+            except Exception as e:
+                print("Error editing:", e)
                 input("> Press enter to continue ")
 
     def delete_player():
@@ -638,6 +759,9 @@ def manage_players():
                     
             except ValueError as e:
                 print("PlayerID must be an integer:", e)
+                input("> Press enter to continue ")
+            except Exception as e:
+                print("Error deleting:", e)
                 input("> Press enter to continue ")
 
     def search_for_players():
@@ -684,19 +808,84 @@ def manage_players():
 
 def manage_cards():
     # inner functions
-    def view_all_cards():
-        search_and_display_records("Card", is_user=True)
+    def view_all_cards_full():
+        try:
+            conn = sqlite3.connect(OUR_DB)
+            cursor = conn.cursor()
 
-    def add_new_card():
-        success = add_record("Card", is_user=True)
+            join_clause = "FROM Card AS c FULL OUTER JOIN PokemonCard AS p ON p.CardID = c.CardID"
+
+            count_query = f'SELECT COUNT(*) {join_clause}'
+            cursor.execute(count_query)
+            num_of_rows = cursor.fetchone()[0]
+
+            max_page = math.ceil(num_of_rows/10)
+            page = 1 if max_page > 0 else 0
+            ans = ""
+            
+            add_log(
+                table_name="Card",
+                action="View",
+                changed_by_staff_id=fetch_current_staff_id(),
+            )
+
+            while True:
+                clear_terminal()
+                current_offset = 10 * (page-1)
+
+                query = f'''
+                    SELECT c.CardID, c.SetID, c.Name, c.CollectorNo, c.Rarity, c.RegulationMark, 
+                    p.HP, p.PokemonType, p.Stage
+                    {join_clause}
+                    LIMIT 10 OFFSET {current_offset}
+                '''
+                cursor.execute(query)
+                records = cursor.fetchall()
+
+                col_names = [
+                    "CardID",
+                    "SetID",
+                    "Name",
+                    "CollectorNo",
+                    "Rarity",
+                    "RegulationMark",
+                    "HP",
+                    "PokemonType",
+                    "Stage"
+                ]
+
+                display_records(records, col_names=col_names)
+
+                print(f"""Press enter to continue to the next page,
+Or enter a page number,
+Or enter [back] to return.
+Page: ({page}/{max_page})
+""")
+                ans = input("> ").strip().lower()
+
+                match ans:
+                    case "" if page < max_page:
+                        page += 1
+                    case _ if ans.isdigit() and 0 < int(ans) <= max_page:
+                        page = int(ans)
+                    case _ if "back" in ans:
+                        return
+                    case _:
+                        print("Not a valid option/page!")
+                        input("> Press enter to continue ")
+        except Exception as e:
+            print("Error in displaying tables in page view:", e)
+        
+    def add_new(table_name):
+        success = add_record(table_name, is_user=True)
         if success:
-            print("Successfully adding card!")
+            print("Successfully added card!")
             input("> Press enter to continue ")
         else:
             print("Error adding card.")
             input("> Press enter to continue ")
 
-    def edit_card():
+    def edit(table_name):
         while True:
             clear_terminal()
             
@@ -706,12 +895,13 @@ def manage_cards():
 
                 if "back" in user_ans:
                     return
+                elif user_ans == "":
+                    print("Please enter a CardID.")
+                    input("> Press enter to continue ")
+                    continue
                 else:
-                    if user_ans == "":
-                        condition_dict = {}
-                    else:
-                        condition_dict = {"CardID": int(user_ans)}
-                    success = edit_record("Card", conditions_dict=condition_dict, is_user=True)
+                    condition_dict = {"CardID": int(user_ans)}
+                    success = edit_record(table_name, conditions_dict=condition_dict, is_user=True)
 
                     if success:
                         print(f"\nSuccessfully edited card ({user_ans})")
@@ -723,6 +913,9 @@ def manage_cards():
                     
             except ValueError as e:
                 print("CardID must be an integer:", e)
+                input("> Press enter to continue ")
+            except Exception as e:
+                print("Error editing:", e)
                 input("> Press enter to continue ")
 
     def delete_card():
@@ -751,13 +944,71 @@ def manage_cards():
                     return
                     
             except ValueError as e:
-                print("PlayerID must be an integer:", e)
+                print("CardID must be an integer:", e)
+                input("> Press enter to continue ")
+            except Exception as e:
+                print("Error deleting:", e)
                 input("> Press enter to continue ")
 
-    def search_for_cards():
-        conditions_dict = build_conditions_dict("Card")
-        search_and_display_records("Card", conditions_dict=conditions_dict, is_user=True)
-        
+    def search_for(table_name):
+        conditions_dict = build_conditions_dict(table_name)
+        search_and_display_records(table_name, conditions_dict=conditions_dict, is_user=True)
+
+    def check_legality():
+        try:
+            conn = sqlite3.connect(OUR_DB)
+            cursor = conn.cursor()
+
+            while True:
+                clear_terminal()
+
+                try:
+                    print("Enter [back] to return")
+                    user_ans = input("Enter CardID to check legality: ").strip().lower()
+
+                    if "back" in user_ans:
+                        return
+                    elif user_ans == "":
+                        print("Please enter a CardID.")
+                        input("> Press enter to continue ")
+                        continue
+                    else:
+                        query = f'''
+                            SELECT RegulationMark FROM Card
+                            WHERE CardID = ?
+                        '''
+
+                        cursor.execute(query, (int(user_ans),))
+                        regulation_mark = cursor.fetchone()[0]
+    
+                        if regulation_mark:
+                            if regulation_mark in legal_regulation_marks:
+                                print(f"\nCard ({user_ans}) is legal!")
+                            else:
+                                print(f"\nCard ({user_ans}) is not legal!")
+                        else:
+                            print(f"\nFailed to check legality ({user_ans})")
+
+                        add_log(
+                            table_name="Card",
+                            record_id=int(user_ans),
+                            action="CHECK LEGALITY",
+                            changed_by_staff_id=fetch_current_staff_id()
+                        )
+    
+                        input("> Press enter to continue ")
+                        return
+                except ValueError as e:
+                    print("CardID must be an integer:", e)
+                    input("> Press enter to continue ")
+
+        except sqlite3.Error as e:
+            print("Error checking legality (SQL):", e)
+            input("> Press enter to continue ")   
+        except Exception as e:
+            print("Error checking legality:", e)
+            input("> Press enter to continue ")        
+
     ans = ""
 
     while True:
@@ -766,11 +1017,15 @@ def manage_cards():
         print("Manage Cards")
         print(SEPARATOR)
         print("""0. Go back
-1. View all cards
+1. View all cards in full
 2. Add a new card
-3. Edit an existing card
-4. Delete an existing card
-5. Search for card(s)""")
+3. Add a new Pokemon card
+4. Edit an existing card
+5. Edit an existing Pokemon card
+6. Delete an existing card
+7. Search for card(s)
+8. Search for Pokemon card(s)
+9. Check a card's legality""")
         print(SEPARATOR)
 
         try:
@@ -780,15 +1035,138 @@ def manage_cards():
                 case 0:
                     return
                 case 1:
-                    view_all_cards()
+                    view_all_cards_full()
                 case 2:
-                    add_new_card()
+                    add_new("Card")
                 case 3:
-                    edit_card()
+                    add_new("PokemonCard")
                 case 4:
-                    delete_card()
+                    edit("Card")
                 case 5:
-                    search_for_cards()
+                    edit("PokemonCard")
+                case 6:
+                    delete_card()
+                case 7:
+                    search_for("Card")
+                case 8:
+                    search_for("PokemonCard")
+                case 9:
+                    check_legality()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
+def manage_card_sets():
+    # inner functions
+    def view_all_sets():
+        search_and_display_records("Set", is_user=True)
+
+    def add_new_set():
+        success = add_record("Set", is_user=True)
+        if success:
+            print("Successfully added set!")
+            input("> Press enter to continue ")
+        else:
+            print("Error adding set.")
+            input("> Press enter to continue ")
+
+    def edit_set():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter SetID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a SetID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    condition_dict = {"SetID": user_ans}
+                    success = edit_record("Set", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited set ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit set ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching SetID:", e)
+                input("> Press enter to continue ")
+
+    def delete_set():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter SetID to delete: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"SetID": user_ans}
+                    success = delete_record("Set", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully deleted set ({user_ans})")
+                    else:
+                        print(f"\nFailed to delete set ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except Exception as e:
+                print("Error while fetching SetID:", e)
+                input("> Press enter to continue ")
+
+    def search_for_sets():
+        conditions_dict = build_conditions_dict("Set")
+        search_and_display_records("Set", conditions_dict=conditions_dict, is_user=True)
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Cards Sets")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all sets
+2. Add a new set
+3. Edit an existing set
+4. Delete an existing set
+5. Search for set(s)""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_sets()
+                case 2:
+                    add_new_set()
+                case 3:
+                    edit_set()
+                case 4:
+                    delete_set()
+                case 5:
+                    search_for_sets()
                 case _:
                     print("Not a valid option!")
                     input("> Press enter to continue ")
@@ -829,6 +1207,8 @@ def home_page():
                 manage_players()
             case 2:
                 manage_cards()
+            case 3:
+                manage_card_sets()
             case 7:
                 search_and_display_records("Log")
             case 8:
