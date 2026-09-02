@@ -51,6 +51,12 @@ def login(email:str, passwordhash:str):
 def logout():
     global logged_in, current_user_email, current_user_passwordhash
 
+    add_log(
+        table_name="SYSTEM",
+        action="LOGOUT",
+        changed_by_staff_id=fetch_current_staff_id()
+    )
+
     logged_in = False
     current_user_email = ""
     current_user_passwordhash = ""
@@ -240,7 +246,12 @@ def add_record(table_name, data_dict=None, is_user=False):
                 if is_autoincrement:
                     next_id_query = f"SELECT seq + 1 FROM sqlite_sequence WHERE name = ?"
                     cursor.execute(next_id_query, (table_name,))
-                    next_id = cursor.fetchone()[0]
+                    next_id = cursor.fetchone()
+
+                    if next_id:
+                        next_id = next_id[0]
+                    else:
+                        next_id = 1
 
                     terminal_output += f"\n{prompt}{next_id}"
                     pk_value = next_id
@@ -813,7 +824,7 @@ def manage_cards():
             conn = sqlite3.connect(OUR_DB)
             cursor = conn.cursor()
 
-            join_clause = "FROM Card AS c FULL OUTER JOIN PokemonCard AS p ON p.CardID = c.CardID"
+            join_clause = "FROM Card AS c LEFT JOIN PokemonCard AS p ON p.CardID = c.CardID"
 
             count_query = f'SELECT COUNT(*) {join_clause}'
             cursor.execute(count_query)
@@ -918,36 +929,24 @@ Page: ({page}/{max_page})
                 print("Error editing:", e)
                 input("> Press enter to continue ")
 
-    def delete_card():
+    def delete_cards():
         while True:
             clear_terminal()
             
             try:
-                print("Enter [back] to return.")
-                user_ans = input("Enter CardID to delete: ").strip().lower()
+                condition_dict = build_conditions_dict("Card")
+                success = delete_record("Card", conditions_dict=condition_dict, is_user=True)
 
-                if "back" in user_ans:
-                    return
+                if success:
+                    print(f"\nSuccessfully deleted!")
                 else:
-                    if user_ans == "":
-                        condition_dict = {}
-                    else:
-                        condition_dict = {"CardID": int(user_ans)}
-                    success = delete_record("Card", conditions_dict=condition_dict, is_user=True)
+                    print(f"\nFailed to delete!")
 
-                    if success:
-                        print(f"\nSuccessfully deleted card ({user_ans})")
-                    else:
-                        print(f"\nFailed to delete card ({user_ans})")
-
-                    input("> Press enter to continue ")
-                    return
-                    
-            except ValueError as e:
-                print("CardID must be an integer:", e)
                 input("> Press enter to continue ")
+                return
+                    
             except Exception as e:
-                print("Error deleting:", e)
+                print("Error while deleting:", e)
                 input("> Press enter to continue ")
 
     def search_for(table_name):
@@ -1045,7 +1044,7 @@ Page: ({page}/{max_page})
                 case 5:
                     edit("PokemonCard")
                 case 6:
-                    delete_card()
+                    delete_cards()
                 case 7:
                     search_for("Card")
                 case 8:
@@ -1174,6 +1173,662 @@ def manage_card_sets():
             print("Please input an integer.")
             input("> Press enter to continue ")
 
+def manage_decks():
+    # inner functions
+    def view_all_decks():
+        try:
+            conn = sqlite3.connect(OUR_DB)
+            cursor = conn.cursor()
+            
+            add_log(
+                table_name="Deck",
+                action="VIEW",
+                changed_by_staff_id=fetch_current_staff_id(),
+            )
+
+            max_page = math.ceil(count_rows(table_name="Deck")/10)
+            page = 1 if max_page > 0 else 0
+            ans = ""
+
+            while True:
+                clear_terminal()
+                current_offset = 10 * (page-1)
+
+                query = f'''
+                    SELECT * FROM Deck
+                    ORDER BY PlayerID ASC
+                    LIMIT 10 OFFSET {current_offset}
+                '''
+                cursor.execute(query)
+                records = cursor.fetchall()
+                display_records(records, table_name="Deck")
+
+                print(f"""Press enter to continue to the next page,
+Or enter a page number,
+Or enter [back] to return.
+Page: ({page}/{max_page})
+""")
+                ans = input("> ").strip().lower()
+
+                match ans:
+                    case "" if page < max_page:
+                        page += 1
+                    case _ if ans.isdigit() and 0 < int(ans) <= max_page:
+                        page = int(ans)
+                    case _ if "back" in ans:
+                        return
+                    case _:
+                        print("Not a valid option/page!")
+                        input("> Press enter to continue ")
+        except Exception as e:
+            print("Error in displaying tables in page view:", e)
+        finally:
+            cursor.close()
+            conn.close()
+
+    def add_new_deck():
+        success = add_record("Deck", is_user=True)
+        if success:
+            print("Successfully added card in deck!")
+            input("> Press enter to continue ")
+        else:
+            print("Error adding card in deck.")
+            input("> Press enter to continue ")
+
+    def edit_deck():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter DeckID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a DeckID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    condition_dict = {"DeckID": user_ans}
+                    success = edit_record("Deck", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited deck ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit deck ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching DeckID:", e)
+                input("> Press enter to continue ")
+
+    def delete_deck():
+        while True:
+            clear_terminal()
+            
+            try:
+                condition_dict = build_conditions_dict("Deck")
+                success = delete_record("Deck", conditions_dict=condition_dict, is_user=True)
+
+                if success:
+                    print(f"\nSuccessfully deleted!")
+                else:
+                    print(f"\nFailed to delete!")
+
+                input("> Press enter to continue ")
+                return
+                    
+            except Exception as e:
+                print("Error while deleting:", e)
+                input("> Press enter to continue ")
+
+    def search_for_decks():
+        conditions_dict = build_conditions_dict("Deck")
+        search_and_display_records("Deck", conditions_dict=conditions_dict, is_user=True)
+
+    def display_popular_cards():
+        try:
+            conn = sqlite3.connect(OUR_DB)
+            cursor = conn.cursor()
+            
+            add_log(
+                table_name="Deck",
+                action="DISPLAY POPULAR CARDS",
+                changed_by_staff_id=fetch_current_staff_id(),
+            )
+
+            max_page = 1 #placeholder
+            page = 1 if max_page > 0 else 0
+            ans = ""
+
+            while True:
+                clear_terminal()
+                current_offset = 10 * (page-1)
+
+                query = f'''
+                    SELECT d.CardID, 
+                    COUNT(d.CardID) AS NumberUsedInDecks, 
+                    (COUNT(d.CardID) * 100.0 / (SELECT COUNT(*) FROM Deck)) AS PercentageUsedInDecks
+                    FROM Deck AS d
+                    INNER JOIN Player AS p on p.PlayerID = d.PlayerID
+                    GROUP BY d.CardID
+                    ORDER BY NumberUsedInDecks DESC
+                    LIMIT 10 OFFSET {current_offset}
+                '''
+                cursor.execute(query)
+                records = cursor.fetchall()
+                display_records(records, col_names=["CardID", "NumberUsedInDecks", "PercentageUsedInDecks"])
+
+                count_query = f'''
+                    SELECT d.CardID
+                    FROM Deck AS d
+                    INNER JOIN Player AS p on p.PlayerID = d.PlayerID
+                    GROUP BY d.CardID
+                '''
+                cursor.execute(count_query)
+                count_records = cursor.fetchall()
+                max_page = math.ceil(len(count_records)/10)
+
+                print(f"""Press enter to continue to the next page,
+Or enter a page number,
+Or enter [back] to return.
+Page: ({page}/{max_page})
+""")
+                ans = input("> ").strip().lower()
+
+                match ans:
+                    case "" if page < max_page:
+                        page += 1
+                    case _ if ans.isdigit() and 0 < int(ans) <= max_page:
+                        page = int(ans)
+                    case _ if "back" in ans:
+                        return
+                    case _:
+                        print("Not a valid option/page!")
+                        input("> Press enter to continue ")
+        except Exception as e:
+            print("Error in displaying tables in page view:", e)
+        finally:
+            cursor.close()
+            conn.close()
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Decks")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all decks
+2. Add a new card in a deck
+3. Edit deck
+4. Delete decks
+5. Search for deck(s)
+6. Display popular cards""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_decks()
+                case 2:
+                    add_new_deck()
+                case 3:
+                    edit_deck()
+                case 4:
+                    delete_deck()
+                case 5:
+                    search_for_decks()
+                case 6:
+                    display_popular_cards()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
+def manage_tournaments():
+    # inner functions
+    def view_all_tournaments():
+        search_and_display_records("Tournament", is_user=True)
+
+    def add_new_tournament():
+        success = add_record("Tournament", is_user=True)
+        if success:
+            print("Successfully added tournament!")
+            input("> Press enter to continue ")
+        else:
+            print("Error adding tournament.")
+            input("> Press enter to continue ")
+
+    def edit_tournament():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter TournamentID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a TournamentID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    condition_dict = {"TournamentID": user_ans}
+                    success = edit_record("Tournament", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited tournament ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit tournament ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching TournamentID:", e)
+                input("> Press enter to continue ")
+
+    def delete_tournament():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter TournamentID to delete: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                else:
+                    if user_ans == "":
+                        condition_dict = {}
+                    else:
+                        condition_dict = {"TournamentID": user_ans}
+                    success = delete_record("Tournament", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully deleted tournament ({user_ans})")
+                    else:
+                        print(f"\nFailed to delete tournament ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return
+                    
+            except Exception as e:
+                print("Error while fetching TournamentID:", e)
+                input("> Press enter to continue ")
+
+    def search_for_tournament():
+        conditions_dict = build_conditions_dict("Tournament")
+        search_and_display_records("Tournament", conditions_dict=conditions_dict, is_user=True)
+
+    def display_winning_player():
+        while True:
+            clear_terminal()
+            
+            try:
+                conn = sqlite3.connect(OUR_DB)
+                cursor = conn.cursor()
+
+                print("Enter [back] to return.")
+                user_ans = input("Enter TournamentID to query winning player: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a TournamentID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    query = f'''
+                        SELECT P.PlayerID AS WinningPlayerID, P.FirstName, P.LastName, P.PlayPokemonID
+                        FROM Match AS M
+                        INNER JOIN Player AS P
+                            ON P.PlayerID =
+                            CASE
+                                WHEN M.P1GamesWon > M.P2GamesWon THEN M.Player1ID
+                                WHEN M.P2GamesWon > M.P1GamesWon THEN M.Player2ID
+                            END
+                        WHERE M.TournamentID = ?
+                        AND M.RoundName = 'Finals';
+                    '''
+
+                    cursor.execute(query, (int(user_ans),))
+                    result = cursor.fetchall()
+
+                    if result:
+                        display_records(records=result, col_names=["WinningPlayerID", "FirstName", "LastName", "PlayPokemonID"])
+                    else:
+                        print(f"\nNo player has won that tournament yet.")
+
+                    add_log(
+                        table_name="Tournament",
+                        action="DISPLAY WINNING PLAYER",
+                        record_id=user_ans,
+                        changed_by_staff_id=fetch_current_staff_id()
+                    )
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching TournamentID:", e)
+                input("> Press enter to continue ")
+
+    def display_num_players():
+        while True:
+            clear_terminal()
+            
+            try:
+                conn = sqlite3.connect(OUR_DB)
+                cursor = conn.cursor()
+
+                print("Enter [back] to return.")
+                user_ans = input("Enter TournamentID to query number of players: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a TournamentID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    query = f'''
+                        SELECT TournamentID, COUNT(RegistrationID) AS NumberOfPlayers
+                        FROM Registration
+                        WHERE TournamentID = ?
+                        GROUP BY TournamentID
+                    '''
+
+                    cursor.execute(query, (int(user_ans),))
+                    result = cursor.fetchone()
+
+                    if result:
+                        print(f"\nThe number of players in Tournament ({result[0]}) is {result[1]}")
+                    else:
+                        print(f"\nFailed to retrieve number of players for Tournament ({user_ans})")
+
+                    add_log(
+                        table_name="Tournament",
+                        action="DISPLAY NUMBER OF PLAYERS",
+                        record_id=user_ans,
+                        changed_by_staff_id=fetch_current_staff_id(),
+                    )
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching TournamentID:", e)
+                input("> Press enter to continue ")
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Tournaments")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all tournaments
+2. Add a new tournament
+3. Edit an existing tournament
+4. Delete an existing tournament
+5. Search for tournament(s)
+6. Display winning player of a tournament
+7. Display number of players in a tournament""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_tournaments()
+                case 2:
+                    add_new_tournament()
+                case 3:
+                    edit_tournament()
+                case 4:
+                    delete_tournament()
+                case 5:
+                    search_for_tournament()
+                case 6:
+                    display_winning_player()
+                case 7:
+                    display_num_players()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
+def manage_matches():
+    # inner functions
+    def view_all_matches():
+        search_and_display_records("Match", is_user=True)
+
+    def add_new_match():
+        success = add_record("Match", is_user=True)
+        if success:
+            print("Successfully added match!")
+            input("> Press enter to continue ")
+        else:
+            print("Error adding match.")
+            input("> Press enter to continue ")
+
+    def edit_match():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter MatchID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a MatchID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    condition_dict = {"MatchID": user_ans}
+                    success = edit_record("Match", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited match ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit match ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching MatchID:", e)
+                input("> Press enter to continue ")
+
+    def delete_match():
+        while True:
+            clear_terminal()
+            
+            try:
+                condition_dict = build_conditions_dict("Match")
+                success = delete_record("Match", conditions_dict=condition_dict, is_user=True)
+
+                if success:
+                    print(f"\nSuccessfully deleted!")
+                else:
+                    print(f"\nFailed to delete!")
+
+                input("> Press enter to continue ")
+                return
+                    
+            except Exception as e:
+                print("Error while deleting:", e)
+                input("> Press enter to continue ")
+
+    def search_for_matches():
+        conditions_dict = build_conditions_dict("Match")
+        search_and_display_records("Match", conditions_dict=conditions_dict, is_user=True)
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Matches")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all matches
+2. Add a new match
+3. Edit an existing match
+4. Delete an existing match
+5. Search for match(s)""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_matches()
+                case 2:
+                    add_new_match()
+                case 3:
+                    edit_match()
+                case 4:
+                    delete_match()
+                case 5:
+                    search_for_matches()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
+def manage_registrations():
+    # inner functions
+    def view_all_registrations():
+        search_and_display_records("Registration", is_user=True)
+
+    def add_new_registration():
+        success = add_record("Registration", is_user=True)
+        if success:
+            print("Successfully registered!")
+            input("> Press enter to continue ")
+        else:
+            print("Error registering.")
+            input("> Press enter to continue ")
+
+    def edit_registration():
+        while True:
+            clear_terminal()
+            
+            try:
+                print("Enter [back] to return.")
+                user_ans = input("Enter RegistrationID to edit: ").strip().lower()
+
+                if "back" in user_ans:
+                    return
+                elif user_ans == "":
+                    print("Please enter a RegistrationID.")
+                    input("> Press enter to continue ")
+                    continue
+                else:
+                    condition_dict = {"RegistrationID": user_ans}
+                    success = edit_record("Registration", conditions_dict=condition_dict, is_user=True)
+
+                    if success:
+                        print(f"\nSuccessfully edited registration ({user_ans})")
+                    else:
+                        print(f"\nFailed to edit registration ({user_ans})")
+
+                    input("> Press enter to continue ")
+                    return  
+                
+            except Exception as e:
+                print("Error while fetching RegistrationID:", e)
+                input("> Press enter to continue ")
+
+    def delete_registration():
+        while True:
+            clear_terminal()
+            
+            try:
+                condition_dict = build_conditions_dict("Registration")
+                success = delete_record("Registration", conditions_dict=condition_dict, is_user=True)
+
+                if success:
+                    print(f"\nSuccessfully deleted!")
+                else:
+                    print(f"\nFailed to delete!")
+
+                input("> Press enter to continue ")
+                return
+                    
+            except Exception as e:
+                print("Error while deleting:", e)
+                input("> Press enter to continue ")
+
+    def search_for_registrations():
+        conditions_dict = build_conditions_dict("Registration")
+        search_and_display_records("Registration", conditions_dict=conditions_dict, is_user=True)
+        
+    ans = ""
+
+    while True:
+        clear_terminal()
+
+        print("Manage Registrations")
+        print(SEPARATOR)
+        print("""0. Go back
+1. View all registrations
+2. Add a new registration
+3. Edit an existing registration
+4. Delete an existing registration
+5. Search for registration(s)""")
+        print(SEPARATOR)
+
+        try:
+            ans = int(input("> "))
+
+            match ans:
+                case 0:
+                    return
+                case 1:
+                    view_all_registrations()
+                case 2:
+                    add_new_registration()
+                case 3:
+                    edit_registration()
+                case 4:
+                    delete_registration()
+                case 5:
+                    search_for_registrations()
+                case _:
+                    print("Not a valid option!")
+                    input("> Press enter to continue ")
+        except ValueError as e:
+            print("Please input an integer.")
+            input("> Press enter to continue ")
+
 def home_page():
     clear_terminal()
     result = search_table("Staff", {"Email": current_user_email, "PasswordHash": current_user_passwordhash}, fields_required=["FirstName", "LastName"])
@@ -1193,9 +1848,10 @@ def home_page():
 3. Manage Card Sets
 4. Manage Decks
 5. Manage Tournaments
-6. Manage Your Account
-7. View Logs
-8. Logout""")
+6. Manage Matches
+7. Manage Registrations
+8. View Logs
+9. Logout""")
     
     print(SEPARATOR)
 
@@ -1209,9 +1865,17 @@ def home_page():
                 manage_cards()
             case 3:
                 manage_card_sets()
+            case 4:
+                manage_decks()
+            case 5:
+                manage_tournaments()
+            case 6:
+                manage_matches()
             case 7:
-                search_and_display_records("Log")
+                manage_registrations()
             case 8:
+                search_and_display_records("Log")
+            case 9:
                 logout()
             case _:
                 print("Not a valid option!")
@@ -1234,8 +1898,8 @@ def main():
             print("Login Page")
 
             # Fetch user details
-            current_user_email = input("Email:")
-            current_user_passwordhash = input("Password:")
+            current_user_email = input("Email: ")
+            current_user_passwordhash = input("Password: ")
 
             # Sanitise input
             current_user_email = current_user_email.strip().lower()
@@ -1246,7 +1910,16 @@ def main():
 
             # Print message accordingly
             print(SEPARATOR)
-            print("Sucessful login!" if logged_in else "Your details do not match anything in our system.")
+            if logged_in:
+                print("Sucessful login!")
+
+                add_log(
+                    table_name="SYSTEM",
+                    action="LOGIN",
+                    changed_by_staff_id=fetch_current_staff_id()
+                )
+            else:
+                print("Your details do not match anything in our system.")
             input("> Press enter to continue ")
 
         # Handle main manager

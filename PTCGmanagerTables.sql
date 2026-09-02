@@ -126,4 +126,5 @@ CREATE TABLE "Match" (
 
   CHECK (Player1ID != Player2ID),
   CHECK (MatchStatus IN ('Scheduled', 'Ongoing', 'Completed'))
+  CHECK (RoundName IN ('Swiss', 'Round of 16', 'Quarterfinals', 'Semifinals', 'Finals'))
 );
